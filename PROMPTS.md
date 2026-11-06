@@ -37,3 +37,12 @@
 - **Time:** 2026-11-06 04:18 PM
 - **Tool:** Gemini
 - **Prompt:** "done"
+## Prompt 9
+- **Time:** 2026-11-06 04:22 PM
+- **Tool:** Gemini
+- **Prompt:** "explain step 3 proplely"
+
+## Prompt 10
+- **Time:** 2026-11-06 06:59 PM
+- **Tool:** Gemini
+- **Prompt:** "done"
