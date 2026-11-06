@@ -345,6 +345,18 @@ def run_torture(iterations: int, seed: int, mode: str, db_path: str):
 
         # Kill child process abruptly while writers are active!
         hard_kill(proc)
+        
+        # Explicitly close pipe streams to prevent Windows handle finalization warnings
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+        except OSError:
+            pass
+
         stop_writers.set()
         w1.join(timeout=1.0)
         w2.join(timeout=1.0)
