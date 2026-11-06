@@ -46,3 +46,16 @@
 - **Time:** 2026-11-06 06:59 PM
 - **Tool:** Gemini
 - **Prompt:** "done"
+## Prompt 11
+- **Time:** 2026-11-06 07:03 PM
+- **Tool:** Gemini
+- **Prompt:** "(Also copy the diagram from Part 1 of ARCHITECTURE.md into a new file called diagrams/architecture.md so your diagrams/ folder is populated as required by Page 14!) I am not able to understand the story, so please explain it to me. I am not able to understand."
+
+## Prompt 12
+- **Time:** 2026-11-06 07:14 PM
+- **Tool:** Gemini
+- **Prompt:** "done"
+## Prompt 13
+- **Time:** 2026-11-06 07:22 PM
+- **Tool:** Gemini
+- **Prompt:** "I got some error, so help me to fix this. [Scenario F3] 1,000,000 keys recovery took 3.093 seconds (limit: 2.000s) FAIL"

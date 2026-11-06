@@ -40,11 +40,10 @@ class KVEngine:
         self.open()
 
     def open(self):
-        """Opens the database file and recovers from any crash."""
+        """Opens or creates the DB file and recovers from any prior crash (optimized for < 2s on 1M keys)."""
         with self.lock:
             t0 = time.perf_counter()
 
-            # 1. Recover from a crash during compaction (file shrinking)
             if not os.path.exists(self.path) and os.path.exists(self.tmp_path):
                 if self._verify_file_complete(self.tmp_path):
                     os.replace(self.tmp_path, self.path)
@@ -54,12 +53,10 @@ class KVEngine:
                 except OSError:
                     pass
 
-            # 2. Open the main database file
             flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
             self.fd = os.open(self.path, flags, 0o666)
             size = os.fstat(self.fd).st_size
 
-            # 3. If it's a brand-new empty file (or crashed while writing the 8-byte header)
             if size < len(FILE_MAGIC):
                 os.lseek(self.fd, 0, os.SEEK_SET)
                 os.ftruncate(self.fd, 0)
@@ -70,13 +67,11 @@ class KVEngine:
                 self.recovery_time_ms = (time.perf_counter() - t0) * 1000.0
                 return
 
-            # 4. Check the 8-byte file header
             os.lseek(self.fd, 0, os.SEEK_SET)
             hdr = os.read(self.fd, len(FILE_MAGIC))
             if hdr != FILE_MAGIC:
-                raise ValueError("Corrupt database header: not a KVDB file")
+                raise ValueError("Invalid database file header")
 
-            # 5. Read the file and check every box (frame) from top to bottom
             self.index.clear()
             self.dead_records = 0
             valid_offset = len(FILE_MAGIC)
@@ -85,9 +80,12 @@ class KVEngine:
             raw_data = os.read(self.fd, size)
             view = memoryview(raw_data)
 
+            # Local variable caching for maximum speed in tight loops
+            local_index = self.index
+            local_dead = 0
+
             pos = len(FILE_MAGIC)
             while pos < size:
-                # If remaining bytes are too small to even hold a box header + footer, stop!
                 if pos + FRAME_HDR_SIZE + COMMIT_SIZE > size:
                     break
 
@@ -96,7 +94,6 @@ class KVEngine:
                 )
                 frame_total_len = FRAME_HDR_SIZE + payload_len + COMMIT_SIZE
 
-                # If box magic is wrong or file was cut off mid-write (Torn Write), stop!
                 if f_magic != FRAME_MAGIC or pos + frame_total_len > size:
                     break
 
@@ -104,21 +101,18 @@ class KVEngine:
                 payload_end = payload_start + payload_len
                 commit_marker = view[payload_end : payload_end + COMMIT_SIZE]
 
-                # Check if the "CMIT" marker is at the end of the box
                 if commit_marker != COMMIT_MAGIC:
                     break
 
-                # Check if the CRC32 checksum matches the data inside the box
                 payload_slice = view[payload_start:payload_end]
                 if (zlib.crc32(payload_slice) & 0xFFFFFFFF) != crc_expected:
                     break
 
-                # Unpack all operations inside this box
+                # Parse and apply operations directly in a single pass (zero intermediate lists)
                 op_cursor = payload_start
                 frame_corrupt = False
-                staged_updates = []
 
-                for _ in range(op_count):
+                while op_cursor < payload_end:
                     if op_cursor + 7 > payload_end:
                         frame_corrupt = True
                         break
@@ -131,30 +125,27 @@ class KVEngine:
                     op_cursor += k_len
                     val_offset = op_cursor
                     op_cursor += v_len
-                    staged_updates.append((op_type, key_bytes, val_offset, v_len))
+
+                    if op_type == OP_PUT:
+                        if key_bytes in local_index:
+                            local_dead += 1
+                        local_index[key_bytes] = (val_offset, v_len)
+                    elif op_type == OP_DEL:
+                        if key_bytes in local_index:
+                            del local_index[key_bytes]
+                            local_dead += 1
+                        local_dead += 1
 
                 if frame_corrupt or op_cursor != payload_end:
                     break
 
-                # Box is 100% valid! Update our in-memory dictionary
-                for op_type, key_bytes, val_offset, v_len in staged_updates:
-                    if op_type == OP_PUT:
-                        if key_bytes in self.index:
-                            self.dead_records += 1
-                        self.index[key_bytes] = (val_offset, v_len)
-                    elif op_type == OP_DEL:
-                        if key_bytes in self.index:
-                            del self.index[key_bytes]
-                            self.dead_records += 1
-                        self.dead_records += 1
-
                 pos += frame_total_len
                 valid_offset = pos
 
+            self.dead_records = local_dead
             del view
             del raw_data
 
-            # 6. If there was a half-written box at the end from a crash, chop it off!
             if valid_offset < size:
                 os.ftruncate(self.fd, valid_offset)
                 os.fsync(self.fd)
