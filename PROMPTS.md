@@ -219,3 +219,42 @@ k2=val2
 PS C:\Users\HP\practice\NeuroNex> Remove-Item check_cli.db, test_batch.txt -Force
 I am getting this. Is it correct or not?"
 
+## Prompt 34
+- **Time:** 2026-11-07 10:35 AM
+- **Tool:** Gemini
+- **Prompt:** "now you act as a judge of this hackathon and tell me what all terminal statements I should"
+
+## Prompt 35
+- **Time:** 2026-11-07 10:48 AM
+- **Tool:** Gemini
+- **Prompt:** "Problem → Why it matters → Our solution → Architecture → Working demonstration → Crash recovery → Testing → Limitations and future improvements. Answer for this."
+
+## Prompt 36
+- **Time:** 2026-11-07 11:02 AM
+- **Tool:** Gemini
+- **Prompt:** "PS C:\Users\HP> cd Desktop
+cd : Cannot find path 'C:\Users\HP\Desktop' because it does not exist.
+At line:1 char:1
++ cd Desktop
++ ~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\HP\Desktop:String) [Set-Location], ItemNotFoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.SetLocationCommand    
+
+Help me to solve this."
+
+## Prompt 37
+- **Time:** 2026-11-07 11:08 AM
+- **Tool:** Gemini
+- **Prompt:** "PS C:\Users\HP\OneDrive\Desktop> git clone <path-or-local-bundle-to-NeuroNex> judge_eval
+At line:1 char:11
++ git clone <path-or-local-bundle-to-NeuroNex> judge_eval
++           ~
+The '<' operator is reserved for future use.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : RedirectionNotSupported
+Help me to solve this."
+
+## Prompt 38
+- **Time:** 2026-11-07 11:14 AM
+- **Tool:** Gemini
+- **Prompt:** "you may comment \"prompt\" to check what is required and the time lapse."
