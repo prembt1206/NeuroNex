@@ -116,168 +116,127 @@ def parse_batch_file(batch_file_path: str) -> list:
     return ops
 
 
+def _decode_token(tok: bytes, is_b64: bool) -> bytes:
+    if is_b64:
+        return base64.b64decode(tok)
+    return tok
+
+
 def run_serve(path: str, max_bytes: int = None):
     """
-    Long-running mode: reads operations from stdin, prints 'ACK <op-id>' after
-    each durable operation.
+    Long-running serve mode reading operations line-by-line from stdin.
     Supports both:
-      1) Human/Judge plain text lines:
-         PUT <op_id> <key> <value>
-         DEL <op_id> <key>
-         BATCH <op_id> <op1;op2;...>  OR multi-line:
-         BATCH_BEGIN <op_id>
-         put <key> <value>
-         del <key>
-         BATCH_END
-         COMPACT <op_id>
-      2) Binary-safe Base64 lines (used by torture tool for 1MB binary values):
-         B64_PUT <op_id> <b64_key> <b64_val>
-         B64_DEL <op_id> <b64_key>
-         B64_BATCH <op_id> <count> <type:b64_k:b64_v ...>
+      1) Interactive plain-text commands typed by the judge:
+         <op_id> PUT <key> <value>
+         <op_id> DEL <key>
+         <op_id> BATCH PUT <k1> <v1> DEL <k2> ...
+      2) Binary-safe Base64 commands sent by the torture tool:
+         <op_id> B64 PUT <b64_key> <b64_val>
+         <op_id> B64 DEL <b64_key>
+         <op_id> B64 BATCH PUT <b64_k1> <b64_v1> DEL <b64_k2> ...
     """
     db = KVEngine(path, max_bytes=max_bytes)
-    in_batch = False
-    batch_id = None
-    batch_ops = []
+    sys.stdout.write("READY\n")
+    sys.stdout.flush()
 
     try:
-        for raw_line in sys.stdin.buffer:
-            line = raw_line.rstrip(b"\r\n")
+        # MUST use readline() instead of 'for line in sys.stdin.buffer'
+        # so interactive human/judge typing is processed immediately line-by-line!
+        while True:
+            raw_line = sys.stdin.buffer.readline()
+            if not raw_line:
+                break
+            line = raw_line.strip()
             if not line:
                 continue
 
-            parts = line.split(b" ")
-            cmd = parts[0].upper()
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+
+            op_id = parts[0].decode("ascii", errors="replace")
+            idx = 1
+            is_b64 = False
+            if parts[idx].upper() == b"B64":
+                is_b64 = True
+                idx += 1
+
+            if idx >= len(parts):
+                continue
+
+            cmd = parts[idx].upper()
+            idx += 1
 
             try:
-                if in_batch:
-                    if cmd == b"BATCH_END":
-                        db.batch(batch_ops)
-                        sys.stdout.write(f"ACK {batch_id}\n")
-                        sys.stdout.flush()
-                        in_batch = False
-                        batch_id = None
-                        batch_ops = []
-                    else:
-                        b_parts = line.split(b" ", 2)
-                        b_cmd = b_parts[0].lower()
-                        if b_cmd == b"put":
-                            k = b_parts[1]
-                            v = b_parts[2] if len(b_parts) > 2 else b""
-                            batch_ops.append(("put", k, v))
-                        elif b_cmd in (b"del", b"delete"):
-                            batch_ops.append(("del", b_parts[1]))
-                    continue
-
-                if cmd == b"BATCH_BEGIN":
-                    batch_id = parts[1].decode("utf-8", errors="replace")
-                    in_batch = True
-                    batch_ops = []
-                    continue
-
                 if cmd == b"PUT":
-                    # PUT <op_id> <key> <value>  (or PUT <key> <value> if judge omits op_id)
-                    if len(parts) >= 4:
-                        op_id = parts[1].decode("utf-8", errors="replace")
-                        k = parts[2]
-                        v = b" ".join(parts[3:])
-                    elif len(parts) == 3:
-                        op_id = "0"
-                        k = parts[1]
-                        v = parts[2]
-                    else:
+                    if idx + 1 >= len(parts):
+                        sys.stdout.write(f"ERR {op_id} Invalid PUT syntax\n")
+                        sys.stdout.flush()
                         continue
+                    k = _decode_token(parts[idx], is_b64)
+                    if is_b64:
+                        v = _decode_token(parts[idx + 1], True)
+                    else:
+                        v = b" ".join(parts[idx + 1 :])
                     db.put(k, v)
                     sys.stdout.write(f"ACK {op_id}\n")
                     sys.stdout.flush()
 
                 elif cmd in (b"DEL", b"DELETE"):
-                    if len(parts) >= 3:
-                        op_id = parts[1].decode("utf-8", errors="replace")
-                        k = parts[2]
-                    elif len(parts) == 2:
-                        op_id = "0"
-                        k = parts[1]
-                    else:
+                    if idx >= len(parts):
+                        sys.stdout.write(f"ERR {op_id} Invalid DEL syntax\n")
+                        sys.stdout.flush()
                         continue
+                    k = _decode_token(parts[idx], is_b64)
                     db.delete(k)
                     sys.stdout.write(f"ACK {op_id}\n")
                     sys.stdout.flush()
 
                 elif cmd == b"BATCH":
-                    # Single-line human batch: BATCH <op_id> put k1 v1;del k2
-                    op_id = parts[1].decode("utf-8", errors="replace")
-                    rest = b" ".join(parts[2:])
                     ops = []
-                    for item in rest.split(b";"):
-                        item = item.strip()
-                        if not item:
-                            continue
-                        sub = item.split(b" ", 2)
-                        scmd = sub[0].lower()
-                        if scmd == b"put":
-                            ops.append(("put", sub[1], sub[2] if len(sub) > 2 else b""))
-                        elif scmd in (b"del", b"delete"):
-                            ops.append(("del", sub[1]))
-                    db.batch(ops)
-                    sys.stdout.write(f"ACK {op_id}\n")
-                    sys.stdout.flush()
-
-                elif cmd == b"B64_PUT":
-                    op_id = parts[1].decode(" ascii")
-                    k = base64.b64decode(parts[2])
-                    v = base64.b64decode(parts[3]) if len(parts) > 3 else b""
-                    db.put(k, v)
-                    sys.stdout.write(f"ACK {op_id}\n")
-                    sys.stdout.flush()
-
-                elif cmd == b"B64_DEL":
-                    op_id = parts[1].decode("ascii")
-                    k = base64.b64decode(parts[2])
-                    db.delete(k)
-                    sys.stdout.write(f"ACK {op_id}\n")
-                    sys.stdout.flush()
-
-                elif cmd == b"B64_BATCH":
-                    op_id = parts[1].decode("ascii")
-                    ops = []
-                    for item in parts[2:]:
-                        if not item:
-                            continue
-                        kind, b64_k, b64_v = item.split(b":", 2)
-                        k = base64.b64decode(b64_k)
-                        if kind == b"P":
-                            v = base64.b64decode(b64_v)
+                    while idx < len(parts):
+                        sub = parts[idx].upper()
+                        idx += 1
+                        if sub == b"PUT":
+                            if idx + 1 >= len(parts):
+                                raise ValueError("Incomplete PUT in BATCH")
+                            k = _decode_token(parts[idx], is_b64)
+                            v = _decode_token(parts[idx + 1], is_b64)
+                            idx += 2
                             ops.append(("put", k, v))
-                        elif kind == b"D":
+                        elif sub in (b"DEL", b"DELETE"):
+                            if idx >= len(parts):
+                                raise ValueError("Incomplete DEL in BATCH")
+                            k = _decode_token(parts[idx], is_b64)
+                            idx += 1
                             ops.append(("del", k))
+                        else:
+                            raise ValueError(f"Unknown batch subcommand: {sub}")
                     db.batch(ops)
                     sys.stdout.write(f"ACK {op_id}\n")
                     sys.stdout.flush()
 
                 elif cmd == b"COMPACT":
-                    op_id = parts[1].decode("utf-8", errors="replace") if len(parts) > 1 else "0"
                     db.compact()
                     sys.stdout.write(f"ACK {op_id}\n")
                     sys.stdout.flush()
 
-                elif cmd == b"GET":
-                    k = parts[1]
-                    val = db.get(k)
-                    if val is None:
-                        sys.stdout.write("NOTFOUND\n")
-                    else:
-                        sys.stdout.buffer.write(val + b"\n")
+                elif cmd == b"PING":
+                    sys.stdout.write(f"ACK {op_id}\n")
                     sys.stdout.flush()
 
-            except DiskFullError as e:
-                op_id_str = parts[1].decode("utf-8", errors="replace") if len(parts) > 1 else "0"
-                sys.stdout.write(f"ERR_DISK_FULL {op_id_str} {e}\n")
+                else:
+                    sys.stdout.write(f"ERR {op_id} Unknown command\n")
+                    sys.stdout.flush()
+
+            except DiskFullError:
+                sys.stdout.write(f"ERR {op_id} DISK_FULL\n")
                 sys.stdout.flush()
             except Exception as e:
-                op_id_str = parts[1].decode("utf-8", errors="replace") if len(parts) > 1 else "0"
-                sys.stdout.write(f"ERR {op_id_str} {e}\n")
+                sys.stdout.write(f"ERR {op_id} {e}\n")
                 sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
     finally:
         db.close()
 
